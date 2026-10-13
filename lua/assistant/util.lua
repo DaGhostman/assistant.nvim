@@ -191,6 +191,16 @@ function M.comment_leader(buf)
   return leader ~= "" and leader or nil
 end
 
+--- Fire a `User` autocmd (`Assistant<name>`) for other plugins, outside of any
+--- textlock.
+---@param name string
+---@param data? table
+function M.emit(name, data)
+  vim.schedule(function()
+    pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "Assistant" .. name, data = data, modeline = false })
+  end)
+end
+
 --- Pluralize: `plural(1, "key")` -> "1 key", `plural(3, "key")` -> "3 keys".
 ---@param n integer
 ---@param word string

@@ -1,5 +1,7 @@
 local config = require("assistant.config")
+local learn = require("assistant.learn")
 local stats = require("assistant.stats")
+local util = require("assistant.util")
 
 local M = {}
 
@@ -30,9 +32,25 @@ function M.queue(hint)
   stats.rule(hint.rule, "noticed")
 end
 
+--- Show a plain message (learning path) through the configured channel.
+---@param msg string
+function M.message(msg)
+  local notify = config.options.notify
+  if notify then
+    notify(msg, { rule = "learn", msg = msg })
+  else
+    vim.notify(msg, vim.log.levels.INFO, { title = "Assistant", timeout = config.options.display_time })
+  end
+end
+
 ---@param hint assistant.Hint
 local function show(hint)
   stats.rule(hint.rule, "shown")
+  local focus = learn.focus_for(hint.rule)
+  if focus then
+    hint = vim.tbl_extend("force", hint, { msg = hint.msg .. ("\n★ Today's focus: %s (%s)"):format(focus.title, focus.short) })
+  end
+  util.emit("Hint", { rule = hint.rule, msg = hint.msg })
   local display = config.options.display
   if display == "ghost" or display == "both" then
     require("assistant.ghost").show_hint(hint)
@@ -52,6 +70,9 @@ end
 function M.flush()
   local queued = pending
   pending = {}
+  if next(queued) then
+    learn.refresh() -- new habits noticed: maybe a relapse
+  end
   local now = vim.uv.now()
   local opts = config.options
   if last_any and now - last_any < opts.cooldown.global * 1000 then
@@ -60,7 +81,7 @@ function M.flush()
   for _, rule in ipairs(require("assistant.rules")) do
     local hint = queued[rule.name]
     local cooldown = (config.rule(rule.name).cooldown or opts.cooldown.rule) * 1000
-    if hint and (not last_shown[rule.name] or now - last_shown[rule.name] >= cooldown) then
+    if hint and not learn.is_quiet(rule.name) and (not last_shown[rule.name] or now - last_shown[rule.name] >= cooldown) then
       last_shown[rule.name], last_any = now, now
       local s = stat(rule.name)
       s.shown = s.shown + 1

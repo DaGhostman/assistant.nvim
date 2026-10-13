@@ -97,6 +97,8 @@ end
 
 ---@type table<string, assistant.Day> Not yet saved
 local pending = {}
+---@type table<string, assistant.Day>? What was on disk at the last read or save
+local saved
 local dirty = false
 local timer ---@type uv.uv_timer_t?
 local group = vim.api.nvim_create_augroup("assistant.stats", { clear = true })
@@ -127,6 +129,7 @@ function M.record(ev)
   if skill then
     local day = bucket()
     day.skills[skill] = (day.skills[skill] or 0) + 1
+    require("assistant.learn").on_skill(skill)
   end
 end
 
@@ -175,10 +178,16 @@ local function merge_day(into, from)
   end
 end
 
+---@return table<string, assistant.Day>
+local function saved_days()
+  saved = saved or read()
+  return saved
+end
+
 --- All days: what's on disk plus what hasn't been saved yet.
 ---@return table<string, assistant.Day>
 function M.load()
-  local days = read()
+  local days = vim.deepcopy(saved_days())
   for day, data in pairs(pending) do
     days[day] = days[day] or { keys = 0, hjkl = 0, rules = {}, skills = {} }
     merge_day(days[day], data)
@@ -191,6 +200,8 @@ function M.save()
   if not dirty then
     return
   end
+  -- Re-read the file to pick up counts saved by other Neovim instances.
+  saved = nil
   local days = M.load()
   -- Drop old days.
   local cutoff = os.date("%Y-%m-%d", os.time() - config.options.stats.keep_days * 86400)
@@ -209,10 +220,19 @@ function M.save()
   f:write(vim.json.encode({ version = 1, days = days }))
   f:close()
   os.rename(tmp, file)
-  pending, dirty = {}, false
+  saved, pending, dirty = days, {}, false
+end
+
+--- How often a skill was used today (saved and unsaved).
+---@param skill string
+function M.count_today(skill)
+  local day = os.date("%Y-%m-%d") --[[@as string]]
+  local s, p = saved_days()[day], pending[day]
+  return (s and s.skills and s.skills[skill] or 0) + (p and p.skills[skill] or 0)
 end
 
 function M.start()
+  saved = nil -- the path may have changed
   if not config.options.stats.enabled then
     return
   end

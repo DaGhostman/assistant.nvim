@@ -70,6 +70,109 @@ Only counts are stored (no text, file names or keys typed in insert mode), per d
 `stdpath("data")/assistant/stats.json`. Several Neovim instances can share the file:
 each one merges its counts in on save.
 
+## Learning path
+
+16 skills, from basics to advanced: counted motions, word motions, line shortcuts,
+`f`/`t`, `{`/`}`, text objects, `.`, search, scrolling, the jump list, registers, `gc`,
+visual block, `:s`, macros, `:g`/`:norm`.
+
+- **Daily focus.** Each day one skill (`focus_count`) is the focus, announced once at
+  startup with a tip. Using it 10 times (`daily_goal`) completes the day's challenge.
+  Hints about habits that the focus skill fixes are tagged `★ Today's focus`.
+- **Learned.** A skill counts as learned after 15 uses on at least 3 different days
+  (within 30 days). From then on, hints about the habits it replaces stay quiet; they
+  are still counted.
+- **Relapse.** If an old habit is noticed 5 times within 3 days after you learned the
+  skill, you get a reminder, its hints come back and it returns to the focus.
+
+`:Assistant learn` shows the path with your progress, `:Assistant learn skip` marks the
+current focus as already known, `:Assistant learn reset` starts over (stats are kept).
+
+Progress comes from the same daily counts as the report. The only extra state (current
+focus, learned skills) lives in `stdpath("data")/assistant/learn.json`.
+
+## Use it in a dashboard, statusline or another plugin
+
+`require("assistant.api")` works even before `setup()` runs, so it can be called from a
+start screen while the plugin itself is still lazy-loaded.
+
+| Function | Returns |
+| --- | --- |
+| `dashboard(opts?)` | A few lines: today's focus with progress, its tip, skills learned and hjkl share. `opts = { tip = true, stats = true }` |
+| `statusline(opts?)` | Short text like `★ f t 3/10` (`✓ f t` once the goal is reached), `""` without a focus. Cheap enough for every redraw. `opts = { icon = "★", done_icon = "✓" }` |
+| `focus()` | Today's focus skills: `{ skill, title, short, tip, today, goal, done, status, … }` |
+| `lessons()` | Every skill with `status` (`"new"`, `"learning"`, `"learned"`, `"relapsed"`), `uses`, `days`, `slips` |
+| `summary(days?)` | Numbers for your own UI: `keys`, `hjkl_share`, `habits`, `skills` (each `{ now, before }`), `learned`, `total` |
+| `report_lines(days?)` | The full `:Assistant report` as plain lines |
+
+[lualine](https://github.com/nvim-lualine/lualine.nvim):
+
+```lua
+sections = {
+  lualine_x = {
+    function()
+      return require("assistant.api").statusline()
+    end,
+  },
+},
+```
+
+[snacks.nvim](https://github.com/folke/snacks.nvim) dashboard:
+
+```lua
+dashboard = {
+  sections = {
+    { section = "header" },
+    { section = "keys", gap = 1, padding = 1 },
+    function()
+      return vim.tbl_map(function(line)
+        return { text = { { line, hl = "Comment" } }, align = "center" }
+      end, require("assistant.api").dashboard())
+    end,
+  },
+},
+```
+
+[alpha-nvim](https://github.com/goolord/alpha-nvim):
+
+```lua
+local assistant = {
+  type = "text",
+  val = require("assistant.api").dashboard(),
+  opts = { position = "center", hl = "Comment" },
+}
+-- add `assistant` to your layout
+```
+
+[dashboard-nvim](https://github.com/nvimdev/dashboard-nvim):
+
+```lua
+config = {
+  footer = require("assistant.api").dashboard({ stats = false }),
+},
+```
+
+### Events
+
+`User` autocmds, with details in `args.data`:
+
+| Pattern | When | `data` |
+| --- | --- | --- |
+| `AssistantHint` | a hint is shown | `{ rule, msg }` |
+| `AssistantProgress` | the focus skill was used | `{ skill, today, goal }` |
+| `AssistantChallengeDone` | the daily goal was reached | `{ skill, today, goal }` |
+| `AssistantLearned` | a skill counts as learned | `{ skill, title }` |
+| `AssistantRelapse` | an old habit came back | `{ skill, title, slips }` |
+
+```lua
+vim.api.nvim_create_autocmd("User", {
+  pattern = "AssistantChallengeDone",
+  callback = function(args)
+    vim.notify("Nice! " .. args.data.skill .. " goal done")
+  end,
+})
+```
+
 ## What it notices
 
 ### Moving around
@@ -153,6 +256,20 @@ require("assistant").setup({
     keep_days = 120,
     report_days = 7, -- period the report compares
   },
+  learn = {
+    enabled = true,
+    focus_count = 1, -- skills to focus on per day
+    daily_goal = 10, -- uses of the focus skill per day
+    learned_uses = 15, -- a skill is learned after this many uses …
+    learned_days = 3, -- … on at least this many different days …
+    window_days = 30, -- … within this many days
+    relapse_threshold = 5, -- the old habit noticed this often …
+    relapse_days = 3, -- … within this many days brings the skill back into focus
+    quiet_learned = true, -- stop hints for habits whose skills are learned
+    announce = true, -- show today's focus once a day
+    announce_delay = 1500,
+    path = nil, -- defaults to stdpath("data") .. "/assistant/learn.json"
+  },
   notify = nil, -- fun(msg, hint): custom display, defaults to vim.notify
   debug = false, -- report errors inside rules instead of ignoring them
   rules = {
@@ -182,6 +299,7 @@ Each rule also accepts its own `cooldown` (seconds).
 ## Commands
 
 - `:Assistant report [days]` shows habit and skill trends over time
+- `:Assistant learn [skip|reset]` shows the learning path, skips the current focus, or starts over
 - `:Assistant status` shows how often each habit was noticed and hinted this session
 - `:Assistant enable` / `disable` / `toggle`
 
@@ -193,5 +311,4 @@ nvim --headless -u NONE -l tests/run.lua
 
 ## Roadmap
 
-- Learning path: daily focus motions, "learned" tracking, and reminders when old habits come back
 - Strict mode (opt-in): block a repeated `hjkl` after the threshold

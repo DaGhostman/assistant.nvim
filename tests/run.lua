@@ -11,13 +11,16 @@ vim.notify = function(msg, level, ...)
   return notify(msg, level, ...)
 end
 
--- Never touch the real stats file.
-local stats_path = vim.fn.tempname() .. "/stats.json"
+-- Never touch the real stats and learning files.
+local tmp = vim.fn.tempname()
+local stats_path = tmp .. "/stats.json"
+local learn_path = tmp .. "/learn.json"
 
 local function setup(opts)
   require("assistant").setup(vim.tbl_deep_extend("force", {
     debug = true,
     stats = { path = stats_path },
+    learn = { path = learn_path, announce = false },
     delay = 20,
     cooldown = { global = 0, rule = 0 },
     notify = function(msg)
@@ -320,6 +323,141 @@ do
   vim.wait(200, function() return #marks(hint) > 0 end)
   text = virt(hint)
   check("display = ghost shows the hint as virtual text", text:find("4j") ~= nil and #shown == 0, text)
+end
+
+-- Learning path and public API, each in a fresh stats/learn directory.
+do
+  local learn = require("assistant.learn")
+  local api = require("assistant.api")
+  local function ago(n)
+    return os.date("%Y-%m-%d", os.time() - n * 86400)
+  end
+  local function env(days, learn_opts)
+    local dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, "p")
+    local f = assert(io.open(dir .. "/stats.json", "w"))
+    f:write(vim.json.encode({ version = 1, days = days }))
+    f:close()
+    shown = {}
+    setup({
+      stats = { path = dir .. "/stats.json" },
+      learn = vim.tbl_extend("force", { path = dir .. "/learn.json", announce = false }, learn_opts or {}),
+    })
+    return dir
+  end
+  local function day(skills, rules)
+    return { keys = 100, hjkl = 10, skills = skills or {}, rules = rules or {} }
+  end
+  local function status(skill)
+    for _, l in ipairs(learn.lessons()) do
+      if l.skill == skill then
+        return l.status
+      end
+    end
+  end
+  local function messages()
+    return table.concat(shown, "\n---\n")
+  end
+
+  -- counts and search: used enough on 3 days -> learned. words: used today -> learning.
+  local learned_days = {
+    [ago(0)] = day({ counts = 6, search = 6, words = 2 }),
+    [ago(1)] = day({ counts = 6, search = 6 }),
+    [ago(2)] = day({ counts = 6, search = 6 }),
+  }
+  local dir = env(learned_days)
+  check("skill used enough on enough days is learned", status("counts") == "learned", status("counts"))
+  check("skill used a little is learning", status("words") == "learning", status("words"))
+  check("unused skill is new", status("macros") == "new", status("macros"))
+  check("focus is the first skill not learned", learn.ensure_focus()[1] == "words", vim.inspect(learn.ensure_focus()))
+  check("focus is saved", vim.fn.filereadable(dir .. "/learn.json") == 1)
+  check("learning a skill is announced", messages():find("Learned: Counted motions") ~= nil, messages())
+  check("habits of learned skills are quiet", learn.is_quiet("search") and not learn.is_quiet("vertical"))
+
+  shown = {}
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "foo bar", "baz foo" })
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  vim.api.nvim_feedkeys(vim.keycode("/foo<CR>"), "tx", false)
+  vim.wait(100, function() return false end)
+  check("quiet habit shows no hint", #shown == 0, messages())
+  check("quiet habit is still counted", require("assistant.notifier").stats.search.triggered >= 1)
+
+  shown = {}
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "local x = foo(bar)" })
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  vim.api.nvim_feedkeys("llllll", "tx", false)
+  vim.wait(200, function() return #shown > 0 end)
+  check("hints for the focus skill mention it", messages():find("Today's focus: Word motions") ~= nil, messages())
+
+  -- Daily goal.
+  local done_event
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "AssistantChallengeDone",
+    once = true,
+    callback = function(args)
+      done_event = args.data
+    end,
+  })
+  shown = {}
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { ("word "):rep(20) })
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  vim.api.nvim_feedkeys("wwwwwwww", "tx", false) -- 2 uses already today, 8 more
+  vim.wait(100, function() return done_event ~= nil end)
+  check("daily goal is announced", messages():find("Daily goal reached: Word motions") ~= nil, messages())
+  check("AssistantChallengeDone fires", done_event and done_event.skill == "words", vim.inspect(done_event))
+
+  -- API.
+  local sl = api.statusline()
+  check("statusline shows the focus", sl == "✓ w b e", sl)
+  local dash = table.concat(api.dashboard(), "\n")
+  check("dashboard shows focus, tip and progress", dash:find("★ Today: Word motions %(w b e%)") and dash:find("jumps to the next word")
+    and dash:find("2/16 skills learned"), dash)
+  local summary = api.summary(7)
+  check("summary has numbers", summary.keys.now > 0 and summary.learned == 2 and #summary.skills > 0, vim.inspect(summary))
+  check("report lines include the learning path", table.concat(api.report_lines(7), "\n"):find("★ Today: Word motions") ~= nil)
+  local panel = table.concat(learn.panel(), "\n")
+  check("panel lists lessons with status", panel:find("★ Word motions") and panel:find("✓ Counted motions") and panel:find("Learning path: 2 of 16"), panel)
+  local ok, err = pcall(learn.open)
+  local ft = vim.bo.filetype
+  if ok then
+    vim.cmd.close()
+  end
+  check("learning panel opens", ok and ft == "assistant_learn", tostring(err))
+
+  -- Skip moves the focus on.
+  shown = {}
+  learn.skip()
+  check("skip marks the focus known and picks the next", learn.ensure_focus()[1] == "line_shortcuts" and status("words") == "learned", vim.inspect(learn.ensure_focus()))
+
+  -- Relapse: a learned skill whose habit keeps coming back.
+  local relapse_event
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "AssistantRelapse",
+    once = true,
+    callback = function(args)
+      relapse_event = args.data
+    end,
+  })
+  learned_days[ago(0)].rules = { search = { noticed = 6, shown = 0 } }
+  env(learned_days)
+  vim.wait(50, function() return relapse_event ~= nil end)
+  check("relapse is detected", status("search") == "relapsed", status("search"))
+  check("relapse is announced", messages():find("old habit is back") ~= nil, messages())
+  check("relapsed skill is not quiet", not learn.is_quiet("search"))
+  check("relapsed skill is in today's focus", vim.tbl_contains(learn.ensure_focus(), "search"), vim.inspect(learn.ensure_focus()))
+  check("AssistantRelapse fires", relapse_event and relapse_event.skill == "search", vim.inspect(relapse_event))
+
+  -- Once-a-day announcement.
+  env(learned_days, { announce = true, announce_delay = 0 })
+  vim.wait(200, function() return messages():find("Today's focus") ~= nil end)
+  check("today's focus is announced, relapsed skills first", messages():find("Today's focus: Search") ~= nil, messages())
+  shown = {}
+  learn.announce()
+  check("the announcement shows once a day", not messages():find("Today's focus"), messages())
+
+  -- Disabled learning path: no quieting, no focus tag.
+  env(learned_days, { enabled = false })
+  check("disabled learning path never quiets", not learn.is_quiet("counts"))
 end
 
 for _, err in ipairs(errors) do

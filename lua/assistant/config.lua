@@ -6,6 +6,20 @@ local M = {}
 ---@field cooldown? integer Seconds before this rule may show again (overrides `cooldown.rule`)
 ---@field provider? string Surround plugin to suggest (`surround` rule only)
 
+---@class assistant.LearnConfig
+---@field enabled boolean
+---@field focus_count integer Skills to focus on per day
+---@field daily_goal integer Uses of the focus skill per day
+---@field learned_uses integer Uses (within `window_days`) before a skill counts as learned
+---@field learned_days integer Different days it must be used on
+---@field window_days integer
+---@field relapse_threshold integer Habits noticed within `relapse_days` that count as a relapse
+---@field relapse_days integer
+---@field quiet_learned boolean Stop hints for habits whose skills are learned
+---@field announce boolean Show today's focus once a day
+---@field announce_delay integer Milliseconds after startup before the announcement
+---@field path? string
+
 ---@class assistant.Config
 ---@field enabled boolean Start tracking as soon as `setup()` is called
 ---@field delay integer Milliseconds without keypresses before a pending hint is shown
@@ -18,6 +32,7 @@ local M = {}
 ---@field display "notify"|"ghost"|"both" Where hints appear: notifications, virtual text at the cursor line, or both
 ---@field ghost { live: boolean, live_after: integer, max_lines: integer }
 ---@field stats { enabled: boolean, path?: string, save_interval: integer, keep_days: integer, report_days: integer }
+---@field learn assistant.LearnConfig
 ---@field notify? fun(msg: string, hint: assistant.Hint) Custom display function (defaults to `vim.notify`)
 ---@field rules table<string, assistant.RuleConfig>
 M.defaults = {
@@ -54,6 +69,20 @@ M.defaults = {
     save_interval = 300, -- seconds between saves (also saved on exit)
     keep_days = 120,
     report_days = 7, -- period the report compares
+  },
+  learn = {
+    enabled = true,
+    focus_count = 1, -- skills to focus on per day
+    daily_goal = 10, -- uses of the focus skill per day
+    learned_uses = 15, -- a skill is learned after this many uses …
+    learned_days = 3, -- … on at least this many different days …
+    window_days = 30, -- … within this many days
+    relapse_threshold = 5, -- the old habit noticed this often …
+    relapse_days = 3, -- … within this many days brings the skill back into focus
+    quiet_learned = true, -- stop hints for habits whose skills are learned
+    announce = true, -- show today's focus once a day
+    announce_delay = 1500,
+    path = nil, -- defaults to stdpath("data") .. "/assistant/learn.json"
   },
   notify = nil,
   debug = false,

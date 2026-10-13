@@ -6,10 +6,11 @@ M.enabled = false
 
 ---@param opts? assistant.Config
 function M.setup(opts)
-  config.set(opts)
+  -- Disable first: it saves pending stats under the old configuration.
   if M.enabled then
     M.disable()
   end
+  config.set(opts)
   if config.options.enabled then
     M.enable()
   end
@@ -19,6 +20,7 @@ function M.enable()
   require("assistant.stats").start()
   require("assistant.ghost").start()
   require("assistant.tracker").start()
+  require("assistant.learn").start()
   M.enabled = true
 end
 
@@ -48,6 +50,19 @@ function M.status()
     lines[#lines + 1] = ("%-12s %3d noticed, %3d shown"):format(rule.name, s.triggered, s.shown)
   end
   vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO, { title = "Assistant" })
+end
+
+--- `:Assistant learn [skip|reset]`: the learning path.
+---@param action? "skip"|"reset"
+function M.learn(action)
+  local learn = require("assistant.learn")
+  if action == "skip" then
+    learn.skip()
+  elseif action == "reset" then
+    learn.reset()
+  else
+    learn.open()
+  end
 end
 
 --- Open the habit report.

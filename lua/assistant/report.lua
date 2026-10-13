@@ -52,17 +52,11 @@ local function num(n)
   return (s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
----@class assistant.ReportHighlight
----@field line integer 0-based
----@field col integer
----@field end_col integer
----@field group string
-
 --- Build the report text.
 ---@param days table<string, assistant.Day>
 ---@param period integer Number of days to compare
 ---@param today? integer os.time() of today
----@return string[] lines, assistant.ReportHighlight[] highlights
+---@return string[] lines, assistant.Highlight[] highlights
 function M.build(days, period, today)
   local t = today or os.time()
   local now_keys, prev_keys = day_range(t, 0, period), day_range(t, period, period)
@@ -188,40 +182,8 @@ function M.open(period)
   period = period or require("assistant.config").options.stats.report_days
   stats.save()
   local lines, hls = M.build(stats.load(), period)
-
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  local ns = vim.api.nvim_create_namespace("assistant.report")
-  for _, h in ipairs(hls) do
-    vim.api.nvim_buf_set_extmark(buf, ns, h.line, h.col, { end_col = h.end_col, hl_group = h.group })
-  end
-  vim.bo[buf].modifiable = false
-  vim.bo[buf].bufhidden = "wipe"
-  vim.bo[buf].filetype = "assistant_report"
-
-  local width = 0
-  for _, l in ipairs(lines) do
-    width = math.max(width, vim.fn.strdisplaywidth(l))
-  end
-  width = math.min(width + 2, vim.o.columns - 4)
-  local height = math.min(#lines, vim.o.lines - 4)
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    width = width,
-    height = height,
-    row = math.floor((vim.o.lines - height) / 2) - 1,
-    col = math.floor((vim.o.columns - width) / 2),
-    style = "minimal",
-    border = "rounded",
-    title = " Assistant ",
-    title_pos = "center",
-  })
-  vim.wo[win].wrap = false
-  for _, key in ipairs({ "q", "<Esc>" }) do
-    vim.keymap.set("n", key, function()
-      vim.api.nvim_win_close(win, true)
-    end, { buffer = buf, nowait = true })
-  end
+  require("assistant.learn").append_summary(lines, hls)
+  require("assistant.ui").float(lines, hls, { title = "Assistant", filetype = "assistant_report" })
 end
 
 return M
